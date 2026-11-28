@@ -1,3 +1,4 @@
+
 package app.varesa
 
 import android.content.Intent
@@ -23,7 +24,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
+import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
+import java.net.URLEncoder
 
 private val Violet = Color(0xFFB58AFF)
 private val DarkBackground = Color(0xFF101016)
@@ -31,10 +38,119 @@ private val DarkPanel = Color(0xFF1D1B28)
 private val LightBackground = Color(0xFFF5F1FA)
 private val LightPanel = Color.White
 
+data class Anime(
+    val malId: Int,
+    val title: String,
+    val genre: String,
+    val year: String,
+    val description: String,
+    val imageUrl: String,
+    val malUrl: String
+)
+
+object AnimeRepository {
+    suspend fun fetchAnime(query: String): List<Anime> =
+        withContext(Dispatchers.IO) {
+            val encoded = URLEncoder.encode(query.trim(), "UTF-8")
+            val endpoint = if (query.isBlank()) {
+                "https://api.jikan.moe/v4/top/anime?limit=20"
+            } else {
+                "https://api.jikan.moe/v4/anime?q=$encoded&limit=20"
+            }
+
+            val connection =
+                URL(endpoint).openConnection() as HttpURLConnection
+
+            try {
+                connection.requestMethod = "GET"
+                connection.connectTimeout = 12000
+                connection.readTimeout = 15000
+                connection.setRequestProperty("Accept", "application/json")
+
+                val status = connection.responseCode
+                if (status !in 200..299) {
+                    throw IllegalStateException(
+                        if (status == 429) {
+                            "Anime service is busy. Wait a little and refresh."
+                        } else {
+                            "Anime service returned error $status."
+                        }
+                    )
+                }
+
+                val body = connection.inputStream
+                    .bufferedReader()
+                    .use { it.readText() }
+
+                val results = JSONObject(body)
+                    .optJSONArray("data")
+                    ?: return@withContext emptyList()
+
+                buildList {
+                    for (i in 0 until results.length()) {
+                        val item = results.optJSONObject(i) ?: continue
+
+                        val title = item.optString("title_english")
+                            .takeIf { it.isNotBlank() && it != "null" }
+                            ?: item.optString("title")
+
+                        if (title.isBlank() || title == "null") continue
+
+                        val genres = item.optJSONArray("genres")
+                        val genreNames = mutableListOf<String>()
+
+                        if (genres != null) {
+                            for (g in 0 until genres.length()) {
+                                val name = genres.optJSONObject(g)
+                                    ?.optString("name")
+
+                                if (!name.isNullOrBlank() && name != "null") {
+                                    genreNames.add(name)
+                                }
+                            }
+                        }
+
+                        val image = item.optJSONObject("images")
+                            ?.optJSONObject("jpg")
+                            ?.optString("large_image_url")
+                            ?.takeIf { !it.isNullOrBlank() && it != "null" }
+                            ?: ""
+
+                        val year = item.optJSONObject("aired")
+                            ?.optJSONObject("prop")
+                            ?.optJSONObject("from")
+                            ?.optInt("year", 0) ?: 0
+
+                        add(
+                            Anime(
+                                malId = item.optInt("mal_id"),
+                                title = title,
+                                genre = genreNames.joinToString(", ")
+                                    .ifBlank { "Anime" },
+                                year = if (year > 0) year.toString()
+                                    else "Year unknown",
+                                description = item.optString("synopsis")
+                                    .takeIf {
+                                        !it.isNullOrBlank() && it != "null"
+                                    } ?: "No synopsis is available yet.",
+                                imageUrl = image,
+                                malUrl = item.optString("url")
+                            )
+                        )
+                    }
+                }
+            } finally {
+                connection.disconnect()
+            }
+        }
+}
+
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { VaresaApp() }
+        setContent {
+            VaresaApp()
+        }
     }
 }
 
@@ -46,12 +162,15 @@ fun VaresaApp() {
     }
 
     var selectedTab by remember { mutableIntStateOf(0) }
-    var darkMode by remember { mutableStateOf(prefs.getBoolean("dark", true)) }
+    var darkMode by remember {
+        mutableStateOf(prefs.getBoolean("dark", true))
+    }
     var genshinEnabled by remember {
         mutableStateOf(prefs.getBoolean("genshin", true))
     }
     var search by remember { mutableStateOf("") }
     var selectedGenre by remember { mutableStateOf("All") }
+
     var saved by remember {
         mutableStateOf(
             prefs.getStringSet("saved", emptySet())?.toSet() ?: emptySet()
@@ -264,6 +383,7 @@ fun DiscoverPage(
                 singleLine = true,
                 shape = RoundedCornerShape(16.dp)
             )
+
             Spacer(Modifier.height(12.dp))
 
             Row(
@@ -294,6 +414,7 @@ fun DiscoverPage(
                         )
                     }
                 }
+
                 Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                     genres.drop(3).forEach { genre ->
                         FilterChip(
@@ -304,6 +425,7 @@ fun DiscoverPage(
                     }
                 }
             }
+
             Spacer(Modifier.height(12.dp))
         }
 
@@ -332,8 +454,11 @@ fun DiscoverPage(
                         .background(panel, RoundedCornerShape(16.dp))
                         .padding(16.dp)
                 ) {
-                    Text("Couldn't load anime", color = textColor,
-                        fontWeight = FontWeight.Bold)
+                    Text(
+                        "Couldn't load anime",
+                        color = textColor,
+                        fontWeight = FontWeight.Bold
+                    )
                     Spacer(Modifier.height(5.dp))
                     Text(error, color = muted, fontSize = 13.sp)
                     TextButton(onClick = onRefresh) {
@@ -457,13 +582,16 @@ fun AnimeCard(
                 fontSize = 15.sp,
                 fontWeight = FontWeight.Bold
             )
+
             Text(
                 "${anime.genre}  •  ${anime.year}",
                 color = Violet,
                 fontSize = 10.sp,
                 lineHeight = 15.sp
             )
+
             Spacer(Modifier.height(6.dp))
+
             Text(
                 anime.description,
                 color = muted,
@@ -471,186 +599,10 @@ fun AnimeCard(
                 lineHeight = 17.sp,
                 maxLines = 4
             )
+
             Spacer(Modifier.height(4.dp))
+
             TextButton(
                 onClick = onSave,
                 contentPadding = PaddingValues(0.dp)
-            ) {
-                Text(
-                    if (saved) "♥ Saved" else "♡ Save",
-                    color = Violet,
-                    fontSize = 12.sp
-                )
-            }
-        }
-    }
-}
-
-@Composable
-fun GalleryPage(
-    genshinEnabled: Boolean,
-    panel: Color,
-    textColor: Color,
-    muted: Color
-) {
-    val context = LocalContext.current
-    val topics = buildList {
-        add("Anime artwork")
-        add("Anime screenshots")
-        add("Official promotional art")
-        add("Fan artwork")
-        if (genshinEnabled) add("Genshin Impact artwork")
-    }
-
-    LazyColumn(
-        Modifier.fillMaxSize().padding(20.dp)
-    ) {
-        item {
-            PageTitle(
-                "Gallery",
-                "Explore artwork and memorable scenes",
-                textColor,
-                muted
-            )
-            Text(
-                "IMAGE COLLECTIONS",
-                color = Violet,
-                fontWeight = FontWeight.Bold,
-                fontSize = 12.sp
-            )
-            Spacer(Modifier.height(12.dp))
-        }
-
-        items(topics) { topic ->
-            SimpleCard(topic, panel, textColor, muted) {
-                val query = Uri.encode(topic)
-                context.startActivity(
-                    Intent(
-                        Intent.ACTION_VIEW,
-                        Uri.parse(
-                            "https://commons.wikimedia.org/w/index.php?search=$query"
-                        )
-                    )
-                )
-            }
-        }
-
-        item {
-            Spacer(Modifier.height(12.dp))
-            Text(
-                "These currently open source searches. An in-app " +
-                    "artwork feed and fullscreen viewer are still planned.",
-                color = muted,
-                fontSize = 12.sp
-            )
-        }
-    }
-}
-
-@Composable
-fun VideosPage(
-    panel: Color,
-    textColor: Color,
-    muted: Color
-) {
-    val context = LocalContext.current
-    val topics = listOf(
-        "Anime",
-        "Anime fight scenes",
-        "Anime edits",
-        "Anime trailers",
-        "Overpowered anime protagonists",
-        "Isekai anime moments",
-        "Genshin Impact Varesa"
-    )
-
-    LazyColumn(
-        Modifier.fillMaxSize().padding(20.dp)
-    ) {
-        item {
-            PageTitle(
-                "Videos",
-                "Trailers, edits and unforgettable moments",
-                textColor,
-                muted
-            )
-            Text(
-                "EXPLORE VIDEO SEARCHES",
-                color = Violet,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold
-            )
-            Spacer(Modifier.height(12.dp))
-        }
-
-        items(topics) { topic ->
-            SimpleCard(topic, panel, textColor, muted) {
-                val query = Uri.encode(topic)
-                context.startActivity(
-                    Intent(
-                        Intent.ACTION_VIEW,
-                        Uri.parse(
-                            "https://www.youtube.com/results?search_query=$query"
-                        )
-                    )
-                )
-            }
-        }
-    }
-}
-
-@Composable
-fun SavedPage(
-    saved: Set<String>,
-    onRemove: (String) -> Unit,
-    panel: Color,
-    textColor: Color,
-    muted: Color
-) {
-    LazyColumn(
-        Modifier.fillMaxSize().padding(20.dp)
-    ) {
-        item {
-            PageTitle(
-                "Saved",
-                "Your personal favourites",
-                textColor,
-                muted
-            )
-        }
-
-        if (saved.isEmpty()) {
-            item {
-                SimpleCard(
-                    "Nothing saved yet. Visit Discover and tap Save on an anime.",
-                    panel,
-                    textColor,
-                    muted
-                ) {}
-            }
-        } else {
-            items(saved.toList()) { title ->
-                SimpleCard(title, panel, textColor, muted) {
-                    onRemove(title)
-                }
-            }
-            item {
-                Text(
-                    "Tap a saved item to remove it.",
-                    color = muted,
-                    fontSize = 12.sp
-                )
-            }
-        }
-    }
-}
-
-@Composable
-fun SettingsPage(
-    darkMode: Boolean,
-    onDarkMode: (Boolean) -> Unit,
-    genshinEnabled: Boolean,
-    onGenshin: (Boolean) -> Unit,
-    panel: Color,
-    textColor: Color,
-    m
+                
