@@ -1,4 +1,3 @@
-
 package app.varesa
 
 import android.content.Intent
@@ -16,40 +15,21 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import org.json.JSONArray
+import coil.compose.AsyncImage
+import kotlinx.coroutines.delay
 
 private val Violet = Color(0xFFB58AFF)
 private val DarkBackground = Color(0xFF101016)
 private val DarkPanel = Color(0xFF1D1B28)
 private val LightBackground = Color(0xFFF5F1FA)
-private val LightPanel = Color(0xFFFFFFFF)
-
-data class Anime(
-    val title: String,
-    val genre: String,
-    val description: String,
-    val year: String
-)
-
-private val animeList = listOf(
-    Anime("That Time I Got Reincarnated as a Slime", "Isekai", "A human begins a new life as a powerful slime.", "2018"),
-    Anime("The Eminence in Shadow", "Action", "A young man builds a secret organization from the shadows.", "2022"),
-    Anime("No Game No Life", "Fantasy", "Two gaming geniuses enter a world ruled by games.", "2014"),
-    Anime("Reincarnated as a Sword", "Isekai", "A sentient sword and a young catgirl become partners.", "2022"),
-    Anime("Overlord", "Fantasy", "A player remains trapped in a game as an immensely powerful ruler.", "2015"),
-    Anime("Mushoku Tensei", "Fantasy", "A second chance at life in a world of magic.", "2021"),
-    Anime("KonoSuba", "Comedy", "A chaotic fantasy adventure full of ridiculous disasters.", "2016"),
-    Anime("The Misfit of Demon King Academy", "Action", "A legendary demon king returns to a changed world.", "2020"),
-    Anime("Arifureta", "Isekai", "A betrayed student fights his way through a dangerous world.", "2019"),
-    Anime("The World's Finest Assassin", "Isekai", "An assassin is reborn with a mission in a fantasy world.", "2021"),
-    Anime("The Rising of the Shield Hero", "Action", "A summoned hero must rebuild his reputation.", "2019"),
-    Anime("How Not to Summon a Demon Lord", "Comedy", "A gamer finds himself inside the world of his favourite game.", "2018")
-)
+private val LightPanel = Color.White
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -67,7 +47,9 @@ fun VaresaApp() {
 
     var selectedTab by remember { mutableIntStateOf(0) }
     var darkMode by remember { mutableStateOf(prefs.getBoolean("dark", true)) }
-    var genshinEnabled by remember { mutableStateOf(prefs.getBoolean("genshin", true)) }
+    var genshinEnabled by remember {
+        mutableStateOf(prefs.getBoolean("genshin", true))
+    }
     var search by remember { mutableStateOf("") }
     var selectedGenre by remember { mutableStateOf("All") }
     var saved by remember {
@@ -76,33 +58,56 @@ fun VaresaApp() {
         )
     }
 
-    val genres = listOf("All", "Action", "Fantasy", "Isekai", "Comedy")
+    var animeItems by remember { mutableStateOf<List<Anime>>(emptyList()) }
+    var loading by remember { mutableStateOf(true) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var refreshKey by remember { mutableIntStateOf(0) }
+
+    LaunchedEffect(search, refreshKey) {
+        delay(if (search.isBlank()) 0 else 650)
+        loading = true
+        error = null
+
+        try {
+            animeItems = AnimeRepository.fetchAnime(search)
+        } catch (e: Exception) {
+            error = e.message ?: "Unable to load anime right now."
+        }
+
+        loading = false
+    }
 
     val background = if (darkMode) DarkBackground else LightBackground
     val panel = if (darkMode) DarkPanel else LightPanel
     val textColor = if (darkMode) Color.White else Color(0xFF24202D)
     val muted = if (darkMode) Color(0xFFAAA5B8) else Color(0xFF777080)
 
+    val genres = listOf("All", "Action", "Fantasy", "Isekai", "Comedy")
+
     MaterialTheme(
-        colorScheme = if (darkMode) darkColorScheme(
-            primary = Violet,
-            background = background,
-            surface = panel,
-            onSurface = textColor
-        ) else lightColorScheme(
-            primary = Color(0xFF8050C8),
-            background = background,
-            surface = panel,
-            onSurface = textColor
-        )
+        colorScheme = if (darkMode) {
+            darkColorScheme(
+                primary = Violet,
+                background = background,
+                surface = panel,
+                onSurface = textColor
+            )
+        } else {
+            lightColorScheme(
+                primary = Color(0xFF8050C8),
+                background = background,
+                surface = panel,
+                onSurface = textColor
+            )
+        }
     ) {
         Scaffold(
             containerColor = background,
             bottomBar = {
-                NavigationBar(
-                    containerColor = panel
-                ) {
-                    val names = listOf("Discover", "Gallery", "Videos", "Saved", "Settings")
+                NavigationBar(containerColor = panel) {
+                    val names = listOf(
+                        "Discover", "Gallery", "Videos", "Saved", "Settings"
+                    )
                     val symbols = listOf("⌕", "▧", "▷", "♡", "⚙")
 
                     names.forEachIndexed { index, name ->
@@ -112,9 +117,7 @@ fun VaresaApp() {
                             icon = {
                                 Text(symbols[index], fontSize = 21.sp)
                             },
-                            label = {
-                                Text(name, fontSize = 10.sp)
-                            },
+                            label = { Text(name, fontSize = 10.sp) },
                             colors = NavigationBarItemDefaults.colors(
                                 selectedIconColor = Violet,
                                 selectedTextColor = Violet,
@@ -137,9 +140,17 @@ fun VaresaApp() {
                         selectedGenre = selectedGenre,
                         onGenre = { selectedGenre = it },
                         genres = genres,
+                        animeItems = animeItems,
+                        loading = loading,
+                        error = error,
+                        onRefresh = { refreshKey++ },
                         saved = saved,
                         onSave = { title ->
-                            saved = if (title in saved) saved - title else saved + title
+                            saved = if (title in saved) {
+                                saved - title
+                            } else {
+                                saved + title
+                            }
                             prefs.edit().putStringSet("saved", saved).apply()
                         },
                         panel = panel,
@@ -148,17 +159,10 @@ fun VaresaApp() {
                     )
 
                     1 -> GalleryPage(
-                        genshinEnabled = genshinEnabled,
-                        panel = panel,
-                        textColor = textColor,
-                        muted = muted
+                        genshinEnabled, panel, textColor, muted
                     )
 
-                    2 -> VideosPage(
-                        panel = panel,
-                        textColor = textColor,
-                        muted = muted
-                    )
+                    2 -> VideosPage(panel, textColor, muted)
 
                     3 -> SavedPage(
                         saved = saved,
@@ -193,7 +197,12 @@ fun VaresaApp() {
 }
 
 @Composable
-fun PageTitle(title: String, subtitle: String, textColor: Color, muted: Color) {
+fun PageTitle(
+    title: String,
+    subtitle: String,
+    textColor: Color,
+    muted: Color
+) {
     Column(Modifier.padding(bottom = 20.dp)) {
         Text(
             title,
@@ -212,6 +221,10 @@ fun DiscoverPage(
     selectedGenre: String,
     onGenre: (String) -> Unit,
     genres: List<String>,
+    animeItems: List<Anime>,
+    loading: Boolean,
+    error: String?,
+    onRefresh: () -> Unit,
     saved: Set<String>,
     onSave: (String) -> Unit,
     panel: Color,
@@ -220,17 +233,24 @@ fun DiscoverPage(
 ) {
     val context = LocalContext.current
 
-    val filtered = animeList.filter {
-        (selectedGenre == "All" || it.genre == selectedGenre) &&
-        (it.title.contains(search, true) || it.description.contains(search, true))
+    val filtered = animeItems.filter { anime ->
+        selectedGenre == "All" ||
+            anime.genre.contains(selectedGenre, ignoreCase = true)
     }
 
     LazyColumn(
-        modifier = Modifier.fillMaxSize().padding(horizontal = 18.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 18.dp),
         contentPadding = PaddingValues(top = 22.dp, bottom = 24.dp)
     ) {
         item {
-            PageTitle("VARESA", "Your personal anime universe", textColor, muted)
+            PageTitle(
+                "VARESA",
+                "Your personal anime universe",
+                textColor,
+                muted
+            )
         }
 
         item {
@@ -238,55 +258,92 @@ fun DiscoverPage(
                 value = search,
                 onValueChange = onSearch,
                 modifier = Modifier.fillMaxWidth(),
-                placeholder = { Text("Search anime...", color = muted) },
+                placeholder = {
+                    Text("Search anime...", color = muted)
+                },
                 singleLine = true,
                 shape = RoundedCornerShape(16.dp)
             )
-            Spacer(Modifier.height(18.dp))
-            Text("EXPLORE GENRES", color = Violet, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.height(8.dp))
-        }
+            Spacer(Modifier.height(12.dp))
 
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                genres.take(3).forEach { genre ->
-                    FilterChip(
-                        selected = selectedGenre == genre,
-                        onClick = { onGenre(genre) },
-                        label = { Text(genre) }
-                    )
-                }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                genres.drop(3).forEach { genre ->
-                    FilterChip(
-                        selected = selectedGenre == genre,
-                        onClick = { onGenre(genre) },
-                        label = { Text(genre) }
-                    )
-                }
-            }
-            Spacer(Modifier.height(18.dp))
-        }
-
-        item {
-            Button(
-                onClick = {
-                    val choice = animeList.random()
-                    onSearch(choice.title)
-                    onGenre("All")
-                },
+            Row(
                 modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(containerColor = Violet)
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("✦  Surprise Me", color = Color(0xFF21152E))
+                Text(
+                    "LIVE ANIME CATALOGUE",
+                    color = Violet,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                TextButton(onClick = onRefresh) {
+                    Text("↻ Refresh", color = Violet)
+                }
             }
-            Spacer(Modifier.height(18.dp))
-            Text("DISCOVER ANIME", color = Violet, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-            Spacer(Modifier.height(8.dp))
         }
 
-        items(filtered) { anime ->
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    genres.take(3).forEach { genre ->
+                        FilterChip(
+                            selected = selectedGenre == genre,
+                            onClick = { onGenre(genre) },
+                            label = { Text(genre) }
+                        )
+                    }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    genres.drop(3).forEach { genre ->
+                        FilterChip(
+                            selected = selectedGenre == genre,
+                            onClick = { onGenre(genre) },
+                            label = { Text(genre) }
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+        }
+
+        if (loading && animeItems.isEmpty()) {
+            item {
+                LoadingMessage("Finding anime for you...", muted)
+            }
+        }
+
+        if (loading && animeItems.isNotEmpty()) {
+            item {
+                Text(
+                    "Updating results...",
+                    color = muted,
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(vertical = 8.dp)
+                )
+            }
+        }
+
+        if (error != null) {
+            item {
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .background(panel, RoundedCornerShape(16.dp))
+                        .padding(16.dp)
+                ) {
+                    Text("Couldn't load anime", color = textColor,
+                        fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(5.dp))
+                    Text(error, color = muted, fontSize = 13.sp)
+                    TextButton(onClick = onRefresh) {
+                        Text("Try again", color = Violet)
+                    }
+                }
+            }
+        }
+
+        items(filtered, key = { it.malId }) { anime ->
             AnimeCard(
                 anime = anime,
                 saved = anime.title in saved,
@@ -295,17 +352,55 @@ fun DiscoverPage(
                 textColor = textColor,
                 muted = muted,
                 onOpen = {
-                    val url = "https://www.google.com/search?q=${Uri.encode(anime.title + " anime")}"
-                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                    if (anime.malUrl.isNotBlank()) {
+                        context.startActivity(
+                            Intent(
+                                Intent.ACTION_VIEW,
+                                Uri.parse(anime.malUrl)
+                            )
+                        )
+                    }
                 }
             )
         }
 
-        if (filtered.isEmpty()) {
+        if (!loading && error == null && filtered.isEmpty()) {
             item {
-                Text("No matches found. Try another search.", color = muted)
+                Text(
+                    if (animeItems.isEmpty()) {
+                        "No results found. Try another search."
+                    } else {
+                        "No titles match this genre."
+                    },
+                    color = muted,
+                    modifier = Modifier.padding(vertical = 16.dp)
+                )
             }
         }
+
+        item {
+            Text(
+                "Catalogue data provided by Jikan / MyAnimeList. " +
+                    "Tap a title to open its source page.",
+                color = muted,
+                fontSize = 10.sp,
+                modifier = Modifier.padding(top = 12.dp)
+            )
+        }
+    }
+}
+
+@Composable
+fun LoadingMessage(message: String, muted: Color) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(vertical = 35.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        CircularProgressIndicator(color = Violet)
+        Spacer(Modifier.height(12.dp))
+        Text(message, color = muted, fontSize = 13.sp)
     }
 }
 
@@ -319,26 +414,75 @@ fun AnimeCard(
     muted: Color,
     onOpen: () -> Unit
 ) {
-    Column(
+    Row(
         Modifier
             .fillMaxWidth()
             .padding(bottom = 12.dp)
             .background(panel, RoundedCornerShape(17.dp))
             .clickable { onOpen() }
-            .padding(16.dp)
+            .padding(11.dp),
+        verticalAlignment = Alignment.Top
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(anime.title, color = textColor, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                Text("${anime.genre}  •  ${anime.year}", color = Violet, fontSize = 11.sp)
-            }
-            TextButton(onClick = onSave) {
-                Text(if (saved) "♥ Saved" else "♡ Save", color = Violet)
+        if (anime.imageUrl.isNotBlank()) {
+            AsyncImage(
+                model = anime.imageUrl,
+                contentDescription = "${anime.title} cover art",
+                modifier = Modifier
+                    .width(88.dp)
+                    .height(124.dp)
+                    .clip(RoundedCornerShape(10.dp)),
+                contentScale = ContentScale.Crop
+            )
+        } else {
+            Box(
+                Modifier
+                    .width(88.dp)
+                    .height(124.dp)
+                    .background(
+                        Violet.copy(alpha = 0.15f),
+                        RoundedCornerShape(10.dp)
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("V", color = Violet, fontSize = 30.sp)
             }
         }
-        Spacer(Modifier.height(7.dp))
-        Text(anime.description, color = muted, fontSize = 13.sp)
-        Text("Tap to explore  ›", color = Violet, fontSize = 12.sp, modifier = Modifier.padding(top = 9.dp))
+
+        Spacer(Modifier.width(12.dp))
+
+        Column(Modifier.weight(1f)) {
+            Text(
+                anime.title,
+                color = textColor,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                "${anime.genre}  •  ${anime.year}",
+                color = Violet,
+                fontSize = 10.sp,
+                lineHeight = 15.sp
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                anime.description,
+                color = muted,
+                fontSize = 12.sp,
+                lineHeight = 17.sp,
+                maxLines = 4
+            )
+            Spacer(Modifier.height(4.dp))
+            TextButton(
+                onClick = onSave,
+                contentPadding = PaddingValues(0.dp)
+            ) {
+                Text(
+                    if (saved) "♥ Saved" else "♡ Save",
+                    color = Violet,
+                    fontSize = 12.sp
+                )
+            }
+        }
     }
 }
 
@@ -358,9 +502,16 @@ fun GalleryPage(
         if (genshinEnabled) add("Genshin Impact artwork")
     }
 
-    LazyColumn(Modifier.fillMaxSize().padding(20.dp)) {
+    LazyColumn(
+        Modifier.fillMaxSize().padding(20.dp)
+    ) {
         item {
-            PageTitle("Gallery", "Explore artwork and memorable scenes", textColor, muted)
+            PageTitle(
+                "Gallery",
+                "Explore artwork and memorable scenes",
+                textColor,
+                muted
+            )
             Text(
                 "IMAGE COLLECTIONS",
                 color = Violet,
@@ -374,7 +525,12 @@ fun GalleryPage(
             SimpleCard(topic, panel, textColor, muted) {
                 val query = Uri.encode(topic)
                 context.startActivity(
-                    Intent(Intent.ACTION_VIEW, Uri.parse("https://commons.wikimedia.org/w/index.php?search=$query"))
+                    Intent(
+                        Intent.ACTION_VIEW,
+                        Uri.parse(
+                            "https://commons.wikimedia.org/w/index.php?search=$query"
+                        )
+                    )
                 )
             }
         }
@@ -382,7 +538,8 @@ fun GalleryPage(
         item {
             Spacer(Modifier.height(12.dp))
             Text(
-                "These links open source searches. An in-app image feed and fullscreen viewer are still being developed.",
+                "These currently open source searches. An in-app " +
+                    "artwork feed and fullscreen viewer are still planned.",
                 color = muted,
                 fontSize = 12.sp
             )
@@ -391,7 +548,11 @@ fun GalleryPage(
 }
 
 @Composable
-fun VideosPage(panel: Color, textColor: Color, muted: Color) {
+fun VideosPage(
+    panel: Color,
+    textColor: Color,
+    muted: Color
+) {
     val context = LocalContext.current
     val topics = listOf(
         "Anime",
@@ -403,10 +564,22 @@ fun VideosPage(panel: Color, textColor: Color, muted: Color) {
         "Genshin Impact Varesa"
     )
 
-    LazyColumn(Modifier.fillMaxSize().padding(20.dp)) {
+    LazyColumn(
+        Modifier.fillMaxSize().padding(20.dp)
+    ) {
         item {
-            PageTitle("Videos", "Trailers, edits and unforgettable moments", textColor, muted)
-            Text("EXPLORE VIDEO SEARCHES", color = Violet, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            PageTitle(
+                "Videos",
+                "Trailers, edits and unforgettable moments",
+                textColor,
+                muted
+            )
+            Text(
+                "EXPLORE VIDEO SEARCHES",
+                color = Violet,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold
+            )
             Spacer(Modifier.height(12.dp))
         }
 
@@ -414,7 +587,12 @@ fun VideosPage(panel: Color, textColor: Color, muted: Color) {
             SimpleCard(topic, panel, textColor, muted) {
                 val query = Uri.encode(topic)
                 context.startActivity(
-                    Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/results?search_query=$query"))
+                    Intent(
+                        Intent.ACTION_VIEW,
+                        Uri.parse(
+                            "https://www.youtube.com/results?search_query=$query"
+                        )
+                    )
                 )
             }
         }
@@ -429,9 +607,16 @@ fun SavedPage(
     textColor: Color,
     muted: Color
 ) {
-    LazyColumn(Modifier.fillMaxSize().padding(20.dp)) {
+    LazyColumn(
+        Modifier.fillMaxSize().padding(20.dp)
+    ) {
         item {
-            PageTitle("Saved", "Your personal favourites", textColor, muted)
+            PageTitle(
+                "Saved",
+                "Your personal favourites",
+                textColor,
+                muted
+            )
         }
 
         if (saved.isEmpty()) {
@@ -450,7 +635,11 @@ fun SavedPage(
                 }
             }
             item {
-                Text("Tap a saved item to remove it.", color = muted, fontSize = 12.sp)
+                Text(
+                    "Tap a saved item to remove it.",
+                    color = muted,
+                    fontSize = 12.sp
+                )
             }
         }
     }
@@ -464,90 +653,4 @@ fun SettingsPage(
     onGenshin: (Boolean) -> Unit,
     panel: Color,
     textColor: Color,
-    muted: Color
-) {
-    Column(
-        Modifier.fillMaxSize().padding(20.dp)
-    ) {
-        PageTitle("Settings", "Make Varesa yours", textColor, muted)
-
-        Text("APPEARANCE", color = Violet, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-
-        SettingSwitch(
-            title = "Dark theme",
-            description = "Use the darker Varesa appearance",
-            checked = darkMode,
-            onChange = onDarkMode,
-            textColor = textColor,
-            muted = muted
-        )
-
-        HorizontalDivider(color = muted.copy(alpha = 0.2f), modifier = Modifier.padding(vertical = 12.dp))
-
-        Text("CONTENT", color = Violet, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-
-        SettingSwitch(
-            title = "Genshin Impact",
-            description = "Include Genshin in gallery searches",
-            checked = genshinEnabled,
-            onChange = onGenshin,
-            textColor = textColor,
-            muted = muted
-        )
-
-        Spacer(Modifier.height(18.dp))
-        Text("ABOUT", color = Violet, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(8.dp))
-        Text("VARESA", color = textColor, fontWeight = FontWeight.Bold, fontSize = 18.sp)
-        Text("Version 1.0 foundation", color = muted, fontSize = 12.sp)
-        Spacer(Modifier.height(12.dp))
-        Text(
-            "Varesa is designed to be lightweight. It does not run a permanent background service.",
-            color = muted,
-            fontSize = 13.sp
-        )
-    }
-}
-
-@Composable
-fun SettingSwitch(
-    title: String,
-    description: String,
-    checked: Boolean,
-    onChange: (Boolean) -> Unit,
-    textColor: Color,
-    muted: Color
-) {
-    Row(
-        Modifier.fillMaxWidth().padding(vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Column(Modifier.weight(1f)) {
-            Text(title, color = textColor, fontWeight = FontWeight.Medium)
-            Text(description, color = muted, fontSize = 12.sp)
-        }
-        Switch(checked = checked, onCheckedChange = onChange)
-    }
-}
-
-@Composable
-fun SimpleCard(
-    title: String,
-    panel: Color,
-    textColor: Color,
-    muted: Color,
-    onClick: () -> Unit
-) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .padding(vertical = 5.dp)
-            .background(panel, RoundedCornerShape(14.dp))
-            .clickable { onClick() }
-            .padding(16.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(title, color = textColor, fontSize = 14.sp, modifier = Modifier.weight(1f))
-        Text("›", color = Violet, fontSize = 23.sp)
-    }
-}
+    m
